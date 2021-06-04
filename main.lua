@@ -22,6 +22,19 @@ local tblmap = function(tbl, ret)
     end
 end
 
+local tblfilter = function(tbl, ret)
+    if tbl == nil then return end
+    if type(tbl) == "table" then
+        local new = {}
+        for i, v in next, tbl do
+            if ret(i, v) then
+                table.insert(new, #new + 1, v)
+            end
+        end
+        return new
+    end
+end
+
 local ProtectedInstances = {}
 local SpoofedInstances = {}
 local SpoofedProperties = {}
@@ -53,26 +66,39 @@ local __Index = OldMetaMethods.__index
 local __NewIndex = OldMetaMethods.__newindex
 
 mt.__namecall = spec.newclose(function(self, ...)
-    if checkcaller() then
+    if (checkcaller()) then
         return __Namecall(self, ...)
     end
     
     local Method = spec.getnamecall():gsub("%z", function(x)
         return x
-    end):gsub("%z", "");
+    end):gsub("%z", "")
 
     local Protected = ProtectedInstances[self]
 
-    if Protected then
+    if (Protected) then
         if table.find(Methods, Method) then
             return Method == "IsA" and false or nil
         end
     end
+
+    if (Method == "GetChildren" or Method == "GetDescendants") then
+        return tblfilter(__Namecall(self, ...), function(i, v)
+            return not table.find(ProtectedInstances, v)
+        end)
+    end
+
+    if (Method == "GetFocusedTextBox") then
+        if (table.find(ProtectedInstances, __Namecall(self, ...))) then
+            return nil
+        end
+    end
+
     return __Namecall(self, ...)
 end)
 
 mt.__index = spec.newclose(function(Instance_, Index)
-    if checkcaller() then
+    if (checkcaller()) then
         return __Index(Instance_, Index)
     end
 
@@ -84,11 +110,11 @@ mt.__index = spec.newclose(function(Instance_, Index)
     local SpoofedInstance = SpoofedInstances[Instance_]
     local SpoofedPropertiesForInstance = SpoofedProperties[Instance_]
 
-    if SpoofedInstance then
-        if table.find(AllowedIndexes, Index) then
+    if (SpoofedInstance) then
+        if (table.find(AllowedIndexes, Index)) then
             return __Index(Instance_, Index)
         end
-        if Instance_:IsA("Humanoid") and game.PlaceId == 6650331930 then
+        if (Instance_:IsA("Humanoid") and game.PlaceId == 6650331930) then
             for i, v in next, spec.getcons(Instance_:GetPropertyChangedSignal("WalkSpeed")) do
                 v:Disable()
             end
@@ -96,18 +122,34 @@ mt.__index = spec.newclose(function(Instance_, Index)
         return __Index(SpoofedInstance, Index)
     end
 
-    if SpoofedPropertiesForInstance then
+    if (SpoofedPropertiesForInstance) then
         for i, SpoofedProperty in next, SpoofedPropertiesForInstance do
-            if Index == SpoofedProperty.Property then
+            if (Index == SpoofedProperty.Property) then
                 return SpoofedProperty.Value
             end
         end
     end
 
-    if ProtectedInstance then
-        if table.find(Methods, Index) then
+    if (ProtectedInstance) then
+        if (table.find(Methods, Index)) then
             return function()
                 return Index == "IsA" and false or nil
+            end
+        end
+    end
+
+    if (Index == "GetChildren" or Index == "GetDescendants") then
+        return function()
+            return tblfilter(__Index(Instance_, Index)(Instance_), function(i, v)
+                return not table.find(ProtectedInstances, v)
+            end)
+        end
+    end
+
+    if (Index == "GetFocusedTextBox") then
+        if (table.find(ProtectedInstances, __Index(Instance_, Index)(Instance_))) then
+            return function()
+                return nil
             end
         end
     end
@@ -116,24 +158,24 @@ mt.__index = spec.newclose(function(Instance_, Index)
 end)
 
 mt.__newindex = spec.newclose(function(Instance_, Index, Value)
-    if checkcaller() then
+    if (checkcaller()) then
         return __NewIndex(Instance_, Index, Value)
     end
 
     local SpoofedInstance = SpoofedInstances[Instance_]
     local SpoofedPropertiesForInstance = SpoofedProperties[Instance_]
 
-    if SpoofedInstance then
-        if table.find(AllowedNewIndexes, Index) then
+    if (SpoofedInstance) then
+        if (table.find(AllowedNewIndexes, Index)) then
             return __NewIndex(Instance_, Index, Value)
         end
         return __NewIndex(SpoofedInstance, Index, SpoofedInstance[Index])
     end
 
-    if SpoofedPropertiesForInstance then
+    if (SpoofedPropertiesForInstance) then
         for i, SpoofedProperty in next, SpoofedPropertiesForInstance do
-            if SpoofedProperty.Property == Index then
-                return __NewIndex(Instance_, Index, SpoofedProperty.Value)
+            if (SpoofedProperty.Property == Index) then
+                return Instance_[Index]
             end
         end
     end
@@ -143,23 +185,33 @@ end)
 
 spec.makereadonly(mt, true)
 
-Prote.ProtectInstance = function(Instance_)
-    if not ProtectedInstances[Instance_] then
+for i, v in next, spec.getcons(game:GetService("UserInputService").TextBoxFocused) do
+    v:Disable()
+end
+for i, v in next, spec.getcons(game:GetService("UserInputService").TextBoxFocusReleased) do
+    v:Disable()
+end
+
+Prote.ProtectInstance = function(Instance_, disallow)
+    if (not ProtectedInstances[Instance_]) then
         ProtectedInstances[#ProtectedInstances + 1] = Instance_
-        if syn and syn.protect_gui then
+        if (syn and syn.protect_gui and not disallow) then
             syn.protect_gui(Instance_)
         end
     end
 end
 
 Prote.SpoofInstance = function(Instance_, Instance2)
-    if not SpoofedInstances[Instance_] then
+    if (not SpoofedInstances[Instance_]) then
         SpoofedInstances[Instance_] = Instance2 and Instance2 or Instance_:Clone()
     end
 end
 
 Prote.SpoofProperty = function(Instance_, Property, Value)
-    if SpoofedProperties[Instance_] then
+    for i, v in next, spec.getcons(Instance_:GetPropertyChangedSignal(Property)) do
+        v:Disable()
+    end
+    if (SpoofedProperties[Instance_]) then
         local Properties = tblmap(SpoofedProperties[Instance_], function(i, v)
             return v.Property
         end)
@@ -167,7 +219,7 @@ Prote.SpoofProperty = function(Instance_, Property, Value)
             table.insert(SpoofedProperties[Instance_], {
                 Property = Property,
                 Value = Value and Value or Instance_[Property]
-            });
+            })
         end
         return
     end
